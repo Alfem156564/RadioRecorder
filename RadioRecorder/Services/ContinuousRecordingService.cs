@@ -859,76 +859,84 @@ public class ContinuousRecordingService
         DateTime FileNameStart,
         DateTime FileNameEnd);
 
-    private static DateTime CalculateLogicalWindowStart(
+    private DateTime CalculateLogicalWindowStart(
     DateTime logicalScheduleStart,
     DateTime logicalNow)
     {
         /*
-         * Si todavía estamos en el primer segmento,
-         * comenzamos exactamente en el inicio del horario.
-         *
-         * Ejemplo Magia:
-         *
-         * horario lógico:
-         * 05:00 → 19:00
-         *
-         * primer segmento:
-         * 05:00 → 06:00
+         * Si todavía estamos antes del horario,
+         * el inicio lógico es el inicio del horario.
          */
-        var firstBoundary =
-            GetNextEvenHour(
-                logicalScheduleStart);
 
-        if (logicalNow < firstBoundary)
+        if (logicalNow <= logicalScheduleStart)
         {
             return logicalScheduleStart;
         }
 
         /*
-         * A partir de la primera hora par,
-         * trabajamos en bloques de 2 horas.
+         * Buscamos la siguiente hora par posterior
+         * al inicio del horario.
          *
-         * 06-08
-         * 08-10
-         * 10-12
-         * ...
+         * Ejemplo:
+         *
+         * 05:20 → 06:00
+         * 05:00 → 06:00
+         * 06:00 → 08:00
          */
+
+        var firstBoundary =
+            GetFirstEvenHourBoundary(
+                logicalScheduleStart);
+
+        /*
+         * Primer segmento parcial.
+         */
+
+        if (logicalNow < firstBoundary)
+        {
+            return logicalNow;
+        }
+
+        /*
+         * A partir de la primera hora par,
+         * los segmentos se calculan con
+         * SegmentDuration.
+         */
+
         var elapsed =
             logicalNow - firstBoundary;
-
-        var segmentDuration =
-            TimeSpan.FromHours(2);
 
         var segmentCount =
             (long)Math.Floor(
                 elapsed.TotalSeconds /
-                segmentDuration.TotalSeconds);
+                _configuration.SegmentDuration.TotalSeconds);
 
         return firstBoundary +
                TimeSpan.FromTicks(
-                   segmentDuration.Ticks *
+                   _configuration.SegmentDuration.Ticks *
                    segmentCount);
     }
 
-    private static DateTime CalculateLogicalWindowEnd(
+    private DateTime CalculateLogicalWindowEnd(
     DateTime logicalScheduleStart,
     DateTime logicalWindowStart,
     DateTime logicalScheduleEnd)
     {
         /*
-         * Primer segmento parcial.
+         * Si el segmento comienza antes de la
+         * primera hora par, termina exactamente
+         * en esa hora par.
          *
          * Ejemplo:
          *
-         * 05:00 → 06:00
+         * 05:20 → 06:00
          */
+
         var firstBoundary =
-            GetNextEvenHour(
+            GetFirstEvenHourBoundary(
                 logicalScheduleStart);
 
-        if (logicalWindowStart ==
-            logicalScheduleStart &&
-            logicalScheduleStart <
+        if (logicalWindowStart <
             firstBoundary)
         {
             return Min(
@@ -937,10 +945,13 @@ public class ContinuousRecordingService
         }
 
         /*
-         * Segmentos normales de 2 horas.
+         * Después de la primera frontera,
+         * utilizamos la duración configurada.
          */
+
         return Min(
-            logicalWindowStart.AddHours(2),
+            logicalWindowStart +
+            _configuration.SegmentDuration,
             logicalScheduleEnd);
     }
 
@@ -989,17 +1000,20 @@ public class ContinuousRecordingService
     {
         /*
          * El siguiente bloque lógico comienza
-         * exactamente donde terminó el actual.
+         * exactamente donde termina el bloque actual.
          */
+
         var logicalStart =
             currentWindow.FileNameEnd;
 
         var logicalEnd =
-            logicalStart.AddHours(2);
+            logicalStart +
+            _configuration.SegmentDuration;
 
         /*
          * Horario lógico final de la estación.
          */
+
         var realScheduleEnd =
             GetScheduleEndForDate(
                 station,
@@ -1012,6 +1026,7 @@ public class ContinuousRecordingService
         /*
          * No permitimos superar el final lógico.
          */
+
         if (logicalEnd >
             logicalScheduleEnd)
         {
@@ -1021,7 +1036,13 @@ public class ContinuousRecordingService
 
         /*
          * Convertimos nuevamente a horario REAL.
+
+         * IMPORTANTE:
+         *
+         * El offset solamente modifica las horas.
+         * Los minutos y segundos permanecen iguales.
          */
+
         var realStart =
             logicalStart.AddHours(
                 -station.RecordingFileTimeOffsetHours);
@@ -1033,6 +1054,7 @@ public class ContinuousRecordingService
         /*
          * No debemos grabar fuera del horario real.
          */
+
         if (realStart <
             currentWindow.End)
         {
@@ -1052,5 +1074,44 @@ public class ContinuousRecordingService
             realEnd,
             logicalStart,
             logicalEnd);
+    }
+
+    private static DateTime GetFirstEvenHourBoundary(
+    DateTime value)
+    {
+        var hour = value.Hour;
+
+        /*
+         * Si el horario comienza exactamente
+         * en una hora par, esa es nuestra primera
+         * frontera.
+         *
+         * 06:00 → 06:00
+         */
+
+        if (hour % 2 == 0 &&
+            value.Minute == 0 &&
+            value.Second == 0 &&
+            value.Millisecond == 0)
+        {
+            return value;
+        }
+
+        /*
+         * Si comienza en una hora impar,
+         * buscamos la siguiente hora par.
+         *
+         * 05:00 → 06:00
+         * 05:30 → 06:00
+         * 07:20 → 08:00
+         */
+
+        var nextEvenHour =
+            hour % 2 == 0
+                ? hour + 2
+                : hour + 1;
+
+        return value.Date.AddHours(
+            nextEvenHour);
     }
 }
