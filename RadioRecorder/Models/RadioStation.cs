@@ -10,6 +10,8 @@ public class RadioStation
 
     public string City { get; set; } = string.Empty;
 
+    public string StationPageUrl { get; set; } = string.Empty;
+
     public string StreamUrl { get; set; } = string.Empty;
 
     public string StreamFormat { get; set; } = "auto";

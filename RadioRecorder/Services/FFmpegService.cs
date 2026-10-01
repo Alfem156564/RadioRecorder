@@ -1,26 +1,38 @@
-﻿using System.Diagnostics;
-using RadioRecorder.Configuration;
+﻿using RadioRecorder.Configuration;
+using RadioRecorder.Interfaces;
 using RadioRecorder.Models;
+using System.Diagnostics;
+using System.Threading;
 
 namespace RadioRecorder.Services;
 
 public class FFmpegService
 {
     private readonly RecordingConfiguration _configuration;
+    private readonly IStreamResolver _streamResolver;
 
-    public FFmpegService(RecordingConfiguration configuration)
+    public FFmpegService(
+     RecordingConfiguration configuration,
+     IStreamResolver streamResolver)
     {
         _configuration = configuration;
+        _streamResolver = streamResolver;
     }
 
     public async Task<Process> StartRecordingAsync(
-        RadioStation station,
-        string outputFile)
+    RadioStation station,
+    string outputFile,
+    CancellationToken cancellationToken = default)
     {
-        var outputDirectory = Path.GetDirectoryName(outputFile);
+        var outputDirectory =
+            Path.GetDirectoryName(outputFile);
 
-        if (!string.IsNullOrWhiteSpace(outputDirectory))
-            Directory.CreateDirectory(outputDirectory);
+        if (!string.IsNullOrWhiteSpace(
+                outputDirectory))
+        {
+            Directory.CreateDirectory(
+                outputDirectory);
+        }
 
         if (!string.Equals(
                 _configuration.AudioFormat,
@@ -28,7 +40,8 @@ public class FFmpegService
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "RadioRecorder actualmente solamente permite grabaciones MP3.");
+                "RadioRecorder actualmente solamente " +
+                "permite grabaciones MP3.");
         }
 
         if (!string.Equals(
@@ -37,62 +50,100 @@ public class FFmpegService
                 StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                "El archivo de grabación debe tener extensión .mp3.");
+                "El archivo de grabación debe tener " +
+                "extensión .mp3.");
         }
 
-        var inputFormat = string.Empty;
+        //
+        // 1. Utilizamos la URL que ya conocemos.
+        // Si no existe, la buscamos.
+        //
 
-        if (!string.IsNullOrWhiteSpace(station.StreamFormat) &&
-            !string.Equals(
-                station.StreamFormat,
-                "auto",
-                StringComparison.OrdinalIgnoreCase))
+        var streamUrl =
+            await GetInitialStreamUrlAsync(
+                station,
+                cancellationToken);
+
+        //
+        // 2. Primer intento.
+        //
+
+        var process =
+            StartFfmpegProcess(
+                station,
+                streamUrl,
+                outputFile);
+
+        //
+        // 3. Esperamos unos segundos para comprobar
+        // si FFmpeg pudo abrir realmente el stream.
+        //
+
+        await Task.Delay(
+            TimeSpan.FromSeconds(3),
+            cancellationToken);
+
+        //
+        // FFmpeg sigue vivo.
+        // Todo correcto.
+        //
+
+        if (!process.HasExited)
         {
-            inputFormat = $"-f {station.StreamFormat} ";
+            return process;
         }
 
-        var arguments =
-            $"-hide_banner " +
-            $"{inputFormat}" +
-            $"-i \"{station.StreamUrl}\" " +
-            $"-vn " +
-            $"-c:a libmp3lame " +
-            $"-b:a {_configuration.AudioBitrateKbps}k " +
-            $"-ar {_configuration.AudioSampleRate} " +
-            $"-f mp3 " +
-            $"\"{outputFile}\"";
+        //
+        // FFmpeg murió inmediatamente.
+        // Es posible que la URL haya cambiado.
+        //
 
-        Console.WriteLine($"🎙️ Iniciando grabación: {station.Name}");
-        Console.WriteLine($"FFmpeg: {arguments}");
+        Console.WriteLine();
 
-        var startInfo = new ProcessStartInfo
+        Console.WriteLine(
+            $"⚠️ [{station.Name}] " +
+            $"FFmpeg no pudo utilizar el stream actual.");
+
+        Console.WriteLine(
+            $"🔄 [{station.Name}] " +
+            $"Se buscará nuevamente en la página.");
+
+        process.Dispose();
+
+        //
+        // 4. Obtener una URL nueva.
+        //
+
+        var newStreamUrl =
+            await RefreshStreamUrlAsync(
+                station,
+                cancellationToken);
+
+        //
+        // 5. Segundo intento con la URL nueva.
+        //
+
+        process =
+            StartFfmpegProcess(
+                station,
+                newStreamUrl,
+                outputFile);
+
+        await Task.Delay(
+            TimeSpan.FromSeconds(3),
+            cancellationToken);
+
+        if (process.HasExited)
         {
-            FileName = "ffmpeg",
-            Arguments = arguments,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
+            var exitCode =
+                process.ExitCode;
 
-        var process = new Process
-        {
-            StartInfo = startInfo,
-            EnableRaisingEvents = true
-        };
-
-        if (!process.Start())
-        {
             process.Dispose();
 
             throw new InvalidOperationException(
-                "No fue posible iniciar FFmpeg.");
+                $"FFmpeg tampoco pudo iniciar con " +
+                $"la nueva URL. ExitCode: {exitCode}");
         }
-
-        _ = ReadOutputAsync(process);
-
-        await Task.CompletedTask;
 
         return process;
     }
@@ -146,5 +197,138 @@ public class FFmpegService
                 $"⚠️ Error leyendo salida de FFmpeg [{process.Id}]: " +
                 $"{ex.Message}");
         }
+    }
+
+    private async Task<string> GetInitialStreamUrlAsync(
+    RadioStation station,
+    CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(
+                station.StreamUrl))
+        {
+            return station.StreamUrl;
+        }
+
+        var streamUrl =
+            await _streamResolver.ResolveStreamUrlAsync(
+                station,
+                cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(streamUrl))
+        {
+            throw new InvalidOperationException(
+                $"No fue posible obtener el stream " +
+                $"de {station.Name}.");
+        }
+
+        return streamUrl;
+    }
+
+    private async Task<string> RefreshStreamUrlAsync(
+    RadioStation station,
+    CancellationToken cancellationToken)
+    {
+        Console.WriteLine();
+
+        Console.WriteLine(
+            $"🔄 [{station.Name}] " +
+            $"Actualizando URL del stream...");
+
+        var streamUrl =
+            await _streamResolver.ResolveStreamUrlAsync(
+                station,
+                cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(streamUrl))
+        {
+            throw new InvalidOperationException(
+                $"No fue posible encontrar un nuevo " +
+                $"stream para {station.Name}.");
+        }
+
+        station.StreamUrl =
+            streamUrl;
+
+        Console.WriteLine(
+            $"✅ [{station.Name}] " +
+            $"Nueva URL encontrada:");
+
+        Console.WriteLine(
+            $"   {streamUrl}");
+
+        return streamUrl;
+    }
+
+    private Process StartFfmpegProcess(
+    RadioStation station,
+    string streamUrl,
+    string outputFile)
+    {
+        var inputFormat =
+            string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(
+                station.StreamFormat) &&
+            !string.Equals(
+                station.StreamFormat,
+                "auto",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            inputFormat =
+                $"-f {station.StreamFormat} ";
+        }
+
+        var arguments =
+            $"-hide_banner " +
+            $"{inputFormat}" +
+            $"-i \"{streamUrl}\" " +
+            $"-vn " +
+            $"-c:a libmp3lame " +
+            $"-b:a {_configuration.AudioBitrateKbps}k " +
+            $"-ar {_configuration.AudioSampleRate} " +
+            $"-ac 2 " +
+            $"-f mp3 " +
+            $"\"{outputFile}\"";
+
+        Console.WriteLine(
+            $"🎙️ Iniciando grabación: " +
+            $"{station.Name}");
+
+        Console.WriteLine(
+            $"FFmpeg: {arguments}");
+
+        var startInfo =
+            new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                Arguments = arguments,
+
+                UseShellExecute = false,
+
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+
+                CreateNoWindow = true
+            };
+
+        var process =
+            new Process
+            {
+                StartInfo = startInfo,
+                EnableRaisingEvents = true
+            };
+
+        if (!process.Start())
+        {
+            process.Dispose();
+
+            throw new InvalidOperationException(
+                "No fue posible iniciar FFmpeg.");
+        }
+
+        _ = ReadOutputAsync(process);
+
+        return process;
     }
 }

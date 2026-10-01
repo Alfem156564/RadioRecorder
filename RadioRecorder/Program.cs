@@ -1,8 +1,10 @@
 ﻿using RadioRecorder.Configuration;
+using RadioRecorder.Interfaces;
 using RadioRecorder.Models;
 using RadioRecorder.Services;
-using Microsoft.EntityFrameworkCore;
-using RadioRecorder.Data;
+using RadioRecorder.Services.StationProviders;
+using RadioRecorder.Services.StreamResolvers;
+
 
 Console.WriteLine("======================================");
 Console.WriteLine("          RADIO RECORDER");
@@ -10,47 +12,14 @@ Console.WriteLine("======================================");
 Console.WriteLine();
 
 //
-//DB 
-//
-var dbPath =
-    Path.Combine(
-        AppContext.BaseDirectory,
-        "RadioRecorder.db");
-
-var options =
-    new DbContextOptionsBuilder<RadioRecorderDbContext>()
-        .UseSqlite(
-            $"Data Source={dbPath}")
-        .Options;
-
-await using var dbContext =
-    new RadioRecorderDbContext(options);
-
-var databaseService =
-    new DatabaseService(
-        dbContext);
-
-await databaseService.InitializeAsync();
-
-//
 // Estaciones
 //
 
-var stationRepository =
-    new StationRepository(
-        dbContext);
-
-var stationInitializationService =
-    new StationInitializationService(
-        stationRepository);
-
-var configuredStations =
-    RadioStationConfiguration.GetStations();
+IRadioStationProvider stationProvider =
+    new HardcodedRadioStationProvider();
 
 var stations =
-    await stationInitializationService
-        .InitializeAsync(
-            configuredStations);
+    await stationProvider.GetStationsAsync();
 
 Console.WriteLine(
     $"📻 Estaciones configuradas: " +
@@ -74,7 +43,7 @@ var recordingConfiguration =
     new RecordingConfiguration
     {
         SegmentDuration =
-            TimeSpan.FromMinutes(2),
+            TimeSpan.FromHours(2),
 
         SegmentOverlap =
             TimeSpan.FromSeconds(20),
@@ -95,9 +64,32 @@ var recordingConfiguration =
 // ==========================================
 //
 
+var httpClient =
+    new HttpClient();
+
+httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+    "Mozilla/5.0 RadioRecorder/1.0");
+
+var streamResolver =
+    new CompositeStreamResolver(
+        new IStreamResolver[]
+        {
+            new Listen2MyRadioStreamResolver(
+                httpClient),
+
+            new RadioGrupoStreamResolver(
+                httpClient),
+
+            new MMRadioStreamResolver(
+                httpClient),
+
+            new DirectStreamResolver()
+        });
+
 var ffmpegService =
     new FFmpegService(
-        recordingConfiguration);
+        recordingConfiguration,
+        streamResolver);
 
 var recorderService =
     new RadioRecorderService(

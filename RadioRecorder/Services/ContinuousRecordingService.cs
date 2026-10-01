@@ -226,9 +226,17 @@ public class ContinuousRecordingService
                     failureTime;
 
                 //
-                // Intentamos recuperar.
+                // Eliminamos la grabación anterior
+                // del administrador de grabaciones.
                 //
+                await _recorderService.StopAsync(
+                    station,
+                    currentRecording);
 
+                //
+                // Intentamos recuperar desde el momento
+                // en que FFmpeg falló.
+                //
                 currentRecording =
                     await RecoverRecordingAsync(
                         station,
@@ -509,10 +517,10 @@ public class ContinuousRecordingService
     }
 
     private async Task<Recording> RecoverRecordingAsync(
-        RadioStation station,
-        RecordingWindow window,
-        DateTime failureTime,
-        CancellationToken cancellationToken)
+    RadioStation station,
+    RecordingWindow window,
+    DateTime failureTime,
+    CancellationToken cancellationToken)
     {
         while (
             !cancellationToken.IsCancellationRequested)
@@ -529,6 +537,10 @@ public class ContinuousRecordingService
                 $"🔄 [{station.Name}] " +
                 $"Intentando recuperación...");
 
+            Console.WriteLine(
+                $"   FFmpeg falló: " +
+                $"{failureTime:HH:mm:ss}");
+
             await Task.Delay(
                 _configuration.RecoveryRetryInterval,
                 cancellationToken);
@@ -543,13 +555,33 @@ public class ContinuousRecordingService
                     "para recuperar la grabación.");
             }
 
+            //
+            // Convertimos el tiempo REAL de recuperación
+            // al tiempo LÓGICO utilizado para el nombre
+            // del archivo.
+            //
+            var logicalRecoveryStart =
+                recoveryStart.AddHours(
+                    station.RecordingFileTimeOffsetHours);
+
+            var logicalWindowEnd =
+                window.FileNameEnd;
+
+            if (logicalRecoveryStart >=
+                logicalWindowEnd)
+            {
+                throw new InvalidOperationException(
+                    "No queda tiempo suficiente " +
+                    "para recuperar la grabación.");
+            }
+
             try
             {
                 var recording =
                     await StartRecordingAsync(
                         station,
-                        window.FileNameStart,
-                        window.FileNameEnd,
+                        logicalRecoveryStart,
+                        logicalWindowEnd,
                         cancellationToken);
 
                 Console.WriteLine();
@@ -558,8 +590,14 @@ public class ContinuousRecordingService
                     $"Grabación recuperada.");
 
                 Console.WriteLine(
-                    $"   {recoveryStart:HH:mm:ss} → " +
+                    $"   Real: " +
+                    $"{recoveryStart:HH:mm:ss} → " +
                     $"{window.End:HH:mm:ss}");
+
+                Console.WriteLine(
+                    $"   Archivo: " +
+                    $"{logicalRecoveryStart:HH:mm:ss} → " +
+                    $"{logicalWindowEnd:HH:mm:ss}");
 
                 return recording;
             }
@@ -618,17 +656,6 @@ public class ContinuousRecordingService
     RadioStation station,
     DateTime now)
     {
-        /*
-         * El horario REAL de la estación no cambia.
-         *
-         * Ejemplo:
-         *
-         * 06:00 → 20:00
-         *
-         * El offset solamente modifica la línea
-         * de tiempo utilizada para nombrar los archivos.
-         */
-
         var realScheduleStart =
             now.Date.Add(
                 station.RecordingStartTime.ToTimeSpan());
@@ -638,16 +665,11 @@ public class ContinuousRecordingService
                 station,
                 now);
 
-        /*
-         * Convertimos la hora actual a la línea
-         * de tiempo lógica del archivo.
-         *
-         * Magia:
-         *
-         * Real:    06:30
-         * Offset:  -1
-         * Archivo: 05:30
-         */
+        //
+        // Línea de tiempo lógica utilizada
+        // para los nombres de archivo.
+        //
+
         var logicalNow =
             now.AddHours(
                 station.RecordingFileTimeOffsetHours);
@@ -660,31 +682,66 @@ public class ContinuousRecordingService
             realScheduleEnd.AddHours(
                 station.RecordingFileTimeOffsetHours);
 
-        /*
-         * Calculamos los límites de los bloques
-         * utilizando la línea de tiempo lógica.
-         */
+        //
+        // El primer segmento comienza exactamente
+        // donde estamos.
+        //
+
         var logicalWindowStart =
-            CalculateLogicalWindowStart(
-                logicalScheduleStart,
-                logicalNow);
+            logicalNow;
+
+        //
+        // Buscamos SIEMPRE la siguiente hora par.
+        //
+        // Ejemplos:
+        //
+        // 15:27:05 → 16:00:00
+        // 15:45:30 → 16:00:00
+        // 17:12:00 → 18:00:00
+        //
 
         var logicalWindowEnd =
-            CalculateLogicalWindowEnd(
-                logicalScheduleStart,
-                logicalWindowStart,
-                logicalScheduleEnd);
+            GetFirstEvenHourBoundary(
+                logicalNow);
 
-        /*
-         * Convertimos nuevamente los límites
-         * a horario REAL.
-         *
-         * Ejemplo:
-         *
-         * Archivo: 05:00 → 06:00
-         *
-         * Real:    06:00 → 07:00
-         */
+        //
+        // Si ya estamos exactamente en una hora par,
+        // GetFirstEvenHourBoundary devuelve esa misma
+        // hora. En ese caso necesitamos crear un
+        // segmento completo.
+        //
+
+        if (logicalWindowEnd <=
+            logicalWindowStart)
+        {
+            logicalWindowEnd =
+                logicalWindowStart +
+                _configuration.SegmentDuration;
+        }
+
+        //
+        // Nunca superar el horario lógico
+        // de la estación.
+        //
+
+        if (logicalWindowStart <
+            logicalScheduleStart)
+        {
+            logicalWindowStart =
+                logicalScheduleStart;
+        }
+
+        if (logicalWindowEnd >
+            logicalScheduleEnd)
+        {
+            logicalWindowEnd =
+                logicalScheduleEnd;
+        }
+
+        //
+        // Convertimos nuevamente a tiempo REAL.
+        //
+
         var realWindowStart =
             logicalWindowStart.AddHours(
                 -station.RecordingFileTimeOffsetHours);
@@ -693,9 +750,11 @@ public class ContinuousRecordingService
             logicalWindowEnd.AddHours(
                 -station.RecordingFileTimeOffsetHours);
 
-        /*
-         * Nos aseguramos de no salir del horario real.
-         */
+        //
+        // Seguridad adicional:
+        // nunca grabar fuera del horario real.
+        //
+
         if (realWindowStart <
             realScheduleStart)
         {
