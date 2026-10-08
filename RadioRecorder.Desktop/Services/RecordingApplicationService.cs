@@ -141,26 +141,63 @@ public sealed class RecordingApplicationService : IAsyncDisposable
         }
     }
 
+
     public async Task StopAsync()
     {
-        if (!_isRunning)
-            return;
-
-        // Detener el monitor antes de cerrar las grabaciones.
-        if (_programMonitorService is not null)
+        if (!_isRunning &&
+            _recordingService is null &&
+            _programMonitorService is null)
         {
-            await _programMonitorService.StopAsync();
-            _programMonitorService = null;
+            return;
         }
 
+        var errors = new List<Exception>();
+
+        // Intentar detener el monitor.
+        if (_programMonitorService is not null)
+        {
+            try
+            {
+                await _programMonitorService.StopAsync();
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex);
+            }
+            finally
+            {
+                _programMonitorService = null;
+            }
+        }
+
+        // Aunque falle el monitor, debemos intentar
+        // detener las grabaciones.
         if (_recordingService is not null)
         {
-            await _recordingService.StopAsync();
-            _recordingService = null;
+            try
+            {
+                await _recordingService.StopAsync();
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex);
+            }
+            finally
+            {
+                _recordingService = null;
+            }
         }
 
         _isRunning = false;
+
+        if (errors.Count > 0)
+        {
+            throw new AggregateException(
+                "Se produjeron errores al detener los servicios.",
+                errors);
+        }
     }
+
 
     public async ValueTask DisposeAsync()
     {

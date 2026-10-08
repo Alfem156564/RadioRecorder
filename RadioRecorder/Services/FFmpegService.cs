@@ -79,9 +79,17 @@ public class FFmpegService
         // si FFmpeg pudo abrir realmente el stream.
         //
 
-        await Task.Delay(
-            TimeSpan.FromSeconds(3),
-            cancellationToken);
+        try
+        {
+            await Task.Delay(
+                TimeSpan.FromSeconds(3),
+                cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            await StopRecordingAsync(process);
+            throw;
+        }
 
         //
         // FFmpeg sigue vivo.
@@ -148,20 +156,50 @@ public class FFmpegService
         return process;
     }
 
+
     public async Task StopRecordingAsync(Process process)
     {
-        if (process.HasExited)
-        {
-            process.Dispose();
-            return;
-        }
-
         try
         {
-            await process.StandardInput.WriteLineAsync("q");
-            await process.StandardInput.FlushAsync();
+            if (process.HasExited)
+                return;
 
-            await process.WaitForExitAsync();
+            // Primero intentamos cerrar FFmpeg normalmente.
+            try
+            {
+                await process.StandardInput.WriteLineAsync("q");
+                await process.StandardInput.FlushAsync();
+
+                using var timeout = new CancellationTokenSource(
+                    TimeSpan.FromSeconds(10));
+
+                await process.WaitForExitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                Console.WriteLine(
+                    $"⚠️ FFmpeg [{process.Id}] no respondió a tiempo. " +
+                    "Se forzará su cierre.");
+            }
+            catch (InvalidOperationException)
+            {
+                // El proceso pudo terminar entre las comprobaciones.
+            }
+            catch (System.IO.IOException)
+            {
+                // La entrada estándar pudo cerrarse antes de enviar "q".
+            }
+
+            // Si continúa vivo, forzamos su cierre.
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+
+                using var killTimeout = new CancellationTokenSource(
+                    TimeSpan.FromSeconds(5));
+
+                await process.WaitForExitAsync(killTimeout.Token);
+            }
         }
         finally
         {

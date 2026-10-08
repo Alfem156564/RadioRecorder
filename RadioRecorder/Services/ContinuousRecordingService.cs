@@ -71,47 +71,82 @@ public class ContinuousRecordingService
             $"{_configuration.SegmentOverlap}");
     }
 
+
     public async Task StopAsync()
     {
         if (_cancellationTokenSource is null)
-        {
             return;
-        }
 
         Console.WriteLine();
-        Console.WriteLine(
-            "🛑 Deteniendo grabación...");
+        Console.WriteLine("🛑 Deteniendo grabación...");
 
-        _cancellationTokenSource.Cancel();
+        var cancellationTokenSource = _cancellationTokenSource;
+        cancellationTokenSource.Cancel();
+
+        var errors = new List<Exception>();
 
         try
         {
-            await Task.WhenAll(_stationTasks);
+            // Cerrar primero las grabaciones que ya conocemos.
+            await StopCurrentSegmentsAsync(errors);
+
+            // Esperar a que terminen las tareas de las estaciones.
+            try
+            {
+                await Task.WhenAll(_stationTasks);
+            }
+            catch (OperationCanceledException)
+            {
+                // Cancelación esperada.
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex);
+            }
+
+            // Volver a revisar por si una grabación terminó de
+            // iniciarse mientras se solicitaba la cancelación.
+            await StopCurrentSegmentsAsync(errors);
         }
-        catch (OperationCanceledException)
+        finally
         {
-            // Cancelación esperada.
+            _currentSegments.Clear();
+            _stationTasks.Clear();
+
+            cancellationTokenSource.Dispose();
+            _cancellationTokenSource = null;
         }
 
-        foreach (var stationId
-                 in _currentSegments.Keys.ToList())
+        if (errors.Count > 0)
         {
-            var recording =
-                _currentSegments[stationId];
-
-            await _recorderService.StopAsync(
-                recording.Station,
-                recording);
+            throw new AggregateException(
+                "Ocurrieron errores al detener las grabaciones.",
+                errors);
         }
-
-        _currentSegments.Clear();
-
-        _stationTasks.Clear();
-
-        _cancellationTokenSource.Dispose();
-
-        _cancellationTokenSource = null;
     }
+
+    private async Task StopCurrentSegmentsAsync(
+        List<Exception> errors)
+    {
+        foreach (var recording in _currentSegments.Values.ToList())
+        {
+            try
+            {
+                await _recorderService.StopAsync(
+                    recording.Station,
+                    recording);
+            }
+            catch (Exception ex)
+            {
+                errors.Add(ex);
+
+                Console.WriteLine(
+                    $"❌ Error al detener [{recording.Station.Name}]: " +
+                    ex.Message);
+            }
+        }
+    }
+
 
     private async Task RunStationAsync(
         RadioStation station,
@@ -669,12 +704,12 @@ public class ContinuousRecordingService
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var recording =
-            await _recorderService.StartAsync(
-                station,
-                null,
-                fileNameStart,
-                fileNameEnd);
+        var recording = await _recorderService.StartAsync(
+            station,
+            null,
+            fileNameStart,
+            fileNameEnd,
+            cancellationToken);
 
         RegisterSuccess(station);
 

@@ -1,5 +1,4 @@
 [
-  
   {
     "Id": "33333333-3333-3333-3333-333333333333",
     "Name": "Stereo Luz FM",
@@ -7,7 +6,7 @@
     "City": "Tehuacán",
     "StationPageUrl": "https://stereoluzfm.radiostream321.com",
     "StreamUrl": "",
-    "StreamFormat": "auto",
+    "StreamFormat": "aac",
     "RecordingStartTime": "06:00:00",
     "RecordingEndTime": "20:00:00",
     "RecordingFileTimeOffsetHours": 0

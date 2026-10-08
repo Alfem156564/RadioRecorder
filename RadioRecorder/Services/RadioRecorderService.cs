@@ -55,7 +55,8 @@ public class RadioRecorderService
     RadioStation station,
     RadioProgram? program = null,
     DateTime? fileNameStart = null,
-    DateTime? fileNameEnd = null)
+    DateTime? fileNameEnd = null,
+    CancellationToken cancellationToken = default)
     {
         var recordingsFolder =
             Path.Combine(
@@ -113,10 +114,10 @@ public class RadioRecorderService
                 StartTime = startTime
             };
 
-        var process =
-            await _ffmpegService.StartRecordingAsync(
-                station,
-                filePath);
+        var process = await _ffmpegService.StartRecordingAsync(
+            station,
+            filePath,
+            cancellationToken);
 
         var activeRecording =
             new ActiveRecording(
