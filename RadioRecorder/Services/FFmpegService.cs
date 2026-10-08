@@ -3,6 +3,7 @@ using RadioRecorder.Interfaces;
 using RadioRecorder.Models;
 using System.Diagnostics;
 using System.Threading;
+using System.Collections.Concurrent;
 
 namespace RadioRecorder.Services;
 
@@ -10,6 +11,9 @@ public class FFmpegService
 {
     private readonly RecordingConfiguration _configuration;
     private readonly IStreamResolver _streamResolver;
+
+    private readonly ConcurrentDictionary<int, long>
+    _ffmpegProgress = new();
 
     public FFmpegService(
      RecordingConfiguration configuration,
@@ -59,101 +63,70 @@ public class FFmpegService
         // Si no existe, la buscamos.
         //
 
-        var streamUrl =
-            await GetInitialStreamUrlAsync(
-                station,
-                cancellationToken);
-
-        //
-        // 2. Primer intento.
-        //
-
-        var process =
-            StartFfmpegProcess(
-                station,
-                streamUrl,
-                outputFile);
-
-        //
-        // 3. Esperamos unos segundos para comprobar
-        // si FFmpeg pudo abrir realmente el stream.
-        //
-
-        try
-        {
-            await Task.Delay(
-                TimeSpan.FromSeconds(3),
-                cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            await StopRecordingAsync(process);
-            throw;
-        }
-
-        //
-        // FFmpeg sigue vivo.
-        // Todo correcto.
-        //
-
-        if (!process.HasExited)
-        {
-            return process;
-        }
-
-        //
-        // FFmpeg murió inmediatamente.
-        // Es posible que la URL haya cambiado.
-        //
-
-        Console.WriteLine();
-
-        Console.WriteLine(
-            $"⚠️ [{station.Name}] " +
-            $"FFmpeg no pudo utilizar el stream actual.");
-
-        Console.WriteLine(
-            $"🔄 [{station.Name}] " +
-            $"Se buscará nuevamente en la página.");
-
-        process.Dispose();
-
-        //
-        // 4. Obtener una URL nueva.
-        //
-
-        var newStreamUrl =
-            await RefreshStreamUrlAsync(
-                station,
-                cancellationToken);
-
-        //
-        // 5. Segundo intento con la URL nueva.
-        //
-
-        process =
-            StartFfmpegProcess(
-                station,
-                newStreamUrl,
-                outputFile);
-
-        await Task.Delay(
-            TimeSpan.FromSeconds(3),
+        // 1. Obtener la URL inicial.
+        var streamUrl = await GetInitialStreamUrlAsync(
+            station,
             cancellationToken);
 
-        if (process.HasExited)
+        // 2. Probar la URL actual y después una URL renovada.
+        for (var urlAttempt = 0; urlAttempt < 2; urlAttempt++)
         {
-            var exitCode =
-                process.ExitCode;
+            // Primero autodetección; después AAC.
+            var formats = new List<string>();
 
-            process.Dispose();
+            if (!string.IsNullOrWhiteSpace(station.StreamFormat))
+            {
+                formats.Add(station.StreamFormat.Trim());
+            }
 
-            throw new InvalidOperationException(
-                $"FFmpeg tampoco pudo iniciar con " +
-                $"la nueva URL. ExitCode: {exitCode}");
+            formats.Add("auto");
+            formats.Add("aac");
+
+            var formatsToTry = formats
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            foreach (var format in formatsToTry)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                Console.WriteLine();
+                Console.WriteLine(
+                    $"🔎 [{station.Name}] Probando formato: {format}");
+
+                var process = await TryStartWithFormatAsync(
+                    station,
+                    streamUrl,
+                    outputFile,
+                    format,
+                    cancellationToken);
+
+                if (process is not null)
+                {
+                    Console.WriteLine(
+                        $"✅ [{station.Name}] Grabación iniciada " +
+                        $"correctamente con formato de entrada: {format}");
+
+                    return process;
+                }
+
+                Console.WriteLine(
+                    $"⚠️ [{station.Name}] El intento con " +
+                    $"{format} no produjo audio suficiente.");
+            }
+
+            // Si fallaron ambos formatos, renovar la URL.
+            if (urlAttempt == 0)
+            {
+                streamUrl = await RefreshStreamUrlAsync(
+                    station,
+                    cancellationToken);
+            }
         }
 
-        return process;
+        throw new InvalidOperationException(
+            $"No fue posible iniciar una grabación válida para " +
+            $"{station.Name}. Fallaron los intentos con auto y AAC.");
     }
 
 
@@ -300,10 +273,16 @@ public class FFmpegService
     private Process StartFfmpegProcess(
     RadioStation station,
     string streamUrl,
-    string outputFile)
+    string outputFile,
+    string inputFormat)
     {
-        var inputFormat =
-            string.Empty;
+        var inputFormatArgument =
+            string.Equals(
+                inputFormat,
+                "auto",
+                StringComparison.OrdinalIgnoreCase)
+                ? string.Empty
+                : $"-f {inputFormat} ";
 
         if (!string.IsNullOrWhiteSpace(
                 station.StreamFormat) &&
@@ -318,7 +297,8 @@ public class FFmpegService
 
         var arguments =
             $"-hide_banner " +
-            $"{inputFormat}" +
+            $"-progress pipe:1 -nostats " +
+            $"{inputFormatArgument}" +
             $"-i \"{streamUrl}\" " +
             $"-vn " +
             $"-c:a libmp3lame " +
@@ -365,8 +345,144 @@ public class FFmpegService
                 "No fue posible iniciar FFmpeg.");
         }
 
+        _ffmpegProgress[process.Id] = 0;
+
+        _ = ReadProgressAsync(process);
         _ = ReadOutputAsync(process);
 
         return process;
+    }
+
+    private async Task<Process?> TryStartWithFormatAsync(
+    RadioStation station,
+    string streamUrl,
+    string outputFile,
+    string inputFormat,
+    CancellationToken cancellationToken)
+    {
+        Process? process = null;
+
+        try
+        {
+            // Eliminar cualquier archivo parcial de un intento anterior.
+            if (File.Exists(outputFile))
+            {
+                File.Delete(outputFile);
+            }
+
+            // Iniciar FFmpeg con el formato que estamos probando.
+            process = StartFfmpegProcess(
+                station,
+                streamUrl,
+                outputFile,
+                inputFormat);
+
+            // Dar tiempo a FFmpeg para recibir y escribir audio.
+            var timeout = DateTime.UtcNow.AddSeconds(10);
+
+            while (DateTime.UtcNow < timeout)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                if (process.HasExited)
+                {
+                    Console.WriteLine(
+                        $"⚠️ [{station.Name}] FFmpeg terminó " +
+                        $"con código {process.ExitCode}.");
+
+                    break;
+                }
+
+                if (_ffmpegProgress.TryGetValue(
+                        process.Id,
+                        out var progress) &&
+                    progress > 0)
+                {
+                    return process;
+                }
+
+                await Task.Delay(
+                    TimeSpan.FromMilliseconds(250),
+                    cancellationToken);
+            }
+
+            Console.WriteLine(
+                $"⚠️ [{station.Name}] No se detectó progreso de audio " +
+                $"con el formato {inputFormat}.");
+
+            await StopRecordingAsync(process);
+            process = null;
+
+            if (File.Exists(outputFile))
+            {
+                File.Delete(outputFile);
+            }
+
+            return null;
+        }
+        catch (OperationCanceledException)
+        {
+            if (process is not null)
+            {
+                await StopRecordingAsync(process);
+            }
+
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"⚠️ [{station.Name}] Falló el intento " +
+                $"con formato {inputFormat}: {ex.Message}");
+
+            if (process is not null)
+            {
+                await StopRecordingAsync(process);
+            }
+
+            if (File.Exists(outputFile))
+            {
+                File.Delete(outputFile);
+            }
+
+            return null;
+        }
+    }
+
+    private async Task ReadProgressAsync(Process process)
+    {
+        try
+        {
+            while (true)
+            {
+                var line =
+                    await process.StandardOutput.ReadLineAsync();
+
+                if (line is null)
+                {
+                    break;
+                }
+
+                if (line.StartsWith(
+                        "out_time_us=",
+                        StringComparison.OrdinalIgnoreCase) &&
+                    long.TryParse(
+                        line["out_time_us=".Length..],
+                        out var progress))
+                {
+                    _ffmpegProgress[process.Id] = progress;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(
+                $"⚠️ Error leyendo progreso de FFmpeg " +
+                $"[{process.Id}]: {ex.Message}");
+        }
+        finally
+        {
+            _ffmpegProgress.TryRemove(process.Id, out _);
+        }
     }
 }
