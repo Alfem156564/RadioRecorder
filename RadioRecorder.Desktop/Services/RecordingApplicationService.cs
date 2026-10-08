@@ -22,6 +22,9 @@ public sealed class RecordingApplicationService : IAsyncDisposable
 
     public bool IsRunning => _isRunning;
 
+    // Notifica a la interfaz cuando se registra un error de grabación.
+    public event Action<string, string, int>? RecordingErrorRegistered;
+
     public IReadOnlyList<RadioStation> Stations { get; private set; }
         = Array.Empty<RadioStation>();
 
@@ -100,6 +103,13 @@ public sealed class RecordingApplicationService : IAsyncDisposable
             _configuration,
             streamResolver);
 
+        ffmpegService.DiagnosticReported +=
+            (stationName, message) =>
+                RecordingErrorRegistered?.Invoke(
+                    stationName,
+                    message,
+                    0);
+
         var recorderService = new RadioRecorderService(
             ffmpegService);
 
@@ -112,6 +122,13 @@ public sealed class RecordingApplicationService : IAsyncDisposable
         var recordingService = new ContinuousRecordingService(
             recorderService,
             _configuration);
+
+        recordingService.ErrorRegistered +=
+            (stationName, error, count) =>
+                RecordingErrorRegistered?.Invoke(
+                    stationName,
+                    error,
+                    count);
 
         var programMonitorService = new ProgramMonitorService(
             stationMonitorService,

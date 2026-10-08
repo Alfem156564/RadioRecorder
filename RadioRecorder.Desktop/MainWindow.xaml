@@ -135,41 +135,104 @@
             </Grid>
         </Border>
 
-        <!-- Área de actividad -->
-        <Border Grid.Row="2"
-                Background="White"
-                CornerRadius="12"
-                Padding="20"
-                Margin="0,0,0,20">
+        <!-- Actividad del sistema y errores acumulados -->
+        <Grid Grid.Row="2" Margin="0,0,0,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.2*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                </Grid.RowDefinitions>
+            <!-- Actividad -->
+            <Border Grid.Column="0"
+                    Background="White"
+                    CornerRadius="12"
+                    Padding="16"
+                    Margin="0,0,10,0">
 
-                <TextBlock Text="Actividad del sistema"
-                           FontSize="18"
-                           FontWeight="SemiBold"
-                           Foreground="#17324D"
-                           Margin="0,0,0,14"/>
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
 
-                <TextBox x:Name="LogTextBox"
-                         Grid.Row="1"
-                         IsReadOnly="True"
-                         AcceptsReturn="True"
-                         TextWrapping="Wrap"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Auto"
-                         FontFamily="Consolas"
-                         FontSize="12"
-                         Background="#111827"
-                         Foreground="#D1FAE5"
-                         BorderThickness="0"
-                         Padding="12"
-                         Text="Sistema iniciado. Esperando instrucciones..."/>
-            </Grid>
-        </Border>
+                    <TextBlock Text="Actividad del sistema"
+                               FontSize="18"
+                               FontWeight="SemiBold"
+                               Foreground="#17324D"
+                               Margin="0,0,0,14"/>
+
+                    <TextBox x:Name="LogTextBox"
+                             Grid.Row="1"
+                             IsReadOnly="True"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"
+                             FontFamily="Consolas"
+                             FontSize="12"
+                             Background="#111827"
+                             Foreground="#D1FAE5"
+                             BorderThickness="0"
+                             Padding="12"
+                             Text="Sistema iniciado. Esperando instrucciones..."/>
+                </Grid>
+            </Border>
+
+            <!-- Errores -->
+            <Border Grid.Column="1"
+                    Background="White"
+                    CornerRadius="12"
+                    Padding="16"
+                    Margin="10,0,0,0">
+
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Margin="0,0,0,14">
+                        <TextBlock Text="Errores detectados"
+                                   FontSize="18"
+                                   FontWeight="SemiBold"
+                                   Foreground="#17324D"/>
+
+                        <TextBlock Text="Conteo acumulado desde el inicio"
+                                   FontSize="11"
+                                   Foreground="#64748B"
+                                   Margin="0,4,0,0"/>
+                    </StackPanel>
+
+                    <DataGrid x:Name="ErrorsDataGrid"
+                              Grid.Row="1"
+                              ItemsSource="{Binding RecordingErrors}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              CanUserReorderColumns="False"
+                              CanUserResizeRows="False"
+                              HeadersVisibility="Column"
+                              GridLinesVisibility="Horizontal"
+                              RowHeaderWidth="0"
+                              Background="White"
+                              BorderThickness="0"
+                              FontSize="11">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Estación"
+                                                Binding="{Binding Station}"
+                                                Width="105"/>
+                            <DataGridTextColumn Header="Error"
+                                                Binding="{Binding Error}"
+                                                Width="*"/>
+                            <DataGridTextColumn Header="Veces"
+                                                Binding="{Binding Count}"
+                                                Width="48"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </Border>
+        </Grid>
 
         <!-- Pie -->
         <TextBlock Grid.Row="3"

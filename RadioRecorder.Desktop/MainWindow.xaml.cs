@@ -1,5 +1,7 @@
 ﻿
 using System;
+using System.Collections.ObjectModel;
+using System.Linq;
 using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
@@ -21,6 +23,15 @@ public partial class MainWindow : Window
 {
     private RecordingApplicationService? _applicationService;
 
+    private readonly ObservableCollection<RecordingErrorItem>
+        _recordingErrors = [];
+
+    private readonly Dictionary<(string Station, string Error), int>
+        _errorOccurrences = new();
+
+    public ObservableCollection<RecordingErrorItem> RecordingErrors =>
+        _recordingErrors;
+
     private bool _isStartingOrStopping;
 
     private const string ConnectionString =
@@ -32,6 +43,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        DataContext = this;
     }
 
     private async void StartButton_Click(
@@ -68,7 +80,13 @@ public partial class MainWindow : Window
             IRadioStationProvider stationProvider =
                 CreateStationProvider(providerType);
 
+            // Los errores se cuentan por sesión de grabación.
+            _recordingErrors.Clear();
+            _errorOccurrences.Clear();
+
             _applicationService = new RecordingApplicationService();
+            _applicationService.RecordingErrorRegistered +=
+                OnRecordingErrorRegistered;
 
             await _applicationService.StartAsync(stationProvider);
 
@@ -89,6 +107,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            OnRecordingErrorRegistered(
+                "Sistema",
+                $"Error al iniciar las grabaciones: {ex.Message}",
+                0);
+
             Log($"ERROR: {ex.Message}");
 
             MessageBox.Show(
@@ -147,6 +170,11 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            OnRecordingErrorRegistered(
+                "Sistema",
+                $"Error al detener las grabaciones: {ex.Message}",
+                0);
+
             Log($"ERROR al detener: {ex.Message}");
 
             MessageBox.Show(
@@ -199,6 +227,57 @@ public partial class MainWindow : Window
         return new SqlRadioStationProvider(factory);
     }
 
+    private void OnRecordingErrorRegistered(
+        string stationName,
+        string error,
+        int count)
+    {
+        // Los eventos llegan desde distintos servicios y tareas de fondo.
+        // La ventana centraliza los conteos de todas las fuentes de diagnóstico.
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            var key = (stationName.Trim(), error.Trim());
+
+            _errorOccurrences.TryGetValue(key, out var currentCount);
+            currentCount++;
+            _errorOccurrences[key] = currentCount;
+
+            var existingIndex = -1;
+
+            for (var i = 0; i < _recordingErrors.Count; i++)
+            {
+                if (string.Equals(
+                        _recordingErrors[i].Station,
+                        key.Item1,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(
+                        _recordingErrors[i].Error,
+                        key.Item2,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    existingIndex = i;
+                    break;
+                }
+            }
+
+            var updatedItem = new RecordingErrorItem(
+                key.Item1,
+                key.Item2,
+                currentCount);
+
+            if (existingIndex >= 0)
+            {
+                _recordingErrors[existingIndex] = updatedItem;
+            }
+            else
+            {
+                _recordingErrors.Add(updatedItem);
+            }
+
+            Log($"Error registrado [{key.Item1}] ({currentCount}): {key.Item2}");
+        });
+    }
+
     private void Log(string message)
     {
         LogTextBox.AppendText(
@@ -217,6 +296,11 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
+                OnRecordingErrorRegistered(
+                    "Sistema",
+                    $"Error al cerrar Radio Recorder: {ex.Message}",
+                    0);
+
                 MessageBox.Show(
                     ex.Message,
                     "Error al cerrar Radio Recorder",

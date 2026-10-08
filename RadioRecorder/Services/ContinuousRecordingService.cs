@@ -22,6 +22,15 @@ public class ContinuousRecordingService
     private readonly HashSet<Guid>
         _failureAlertsIssued = [];
 
+    // Conteo acumulado de errores desde que inicia este servicio.
+    // Es independiente de _consecutiveFailures, que se reinicia al recuperarse.
+    private readonly object _errorCountsLock = new();
+
+    private readonly Dictionary<string, int> _errorCounts =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    public event Action<string, string, int>? ErrorRegistered;
+
     public ContinuousRecordingService(
         RadioRecorderService recorderService,
         RecordingConfiguration configuration)
@@ -39,6 +48,12 @@ public class ContinuousRecordingService
         }
 
         ValidateConfiguration();
+
+        // Cada ejecución nueva comienza sus contadores desde cero.
+        lock (_errorCountsLock)
+        {
+            _errorCounts.Clear();
+        }
 
         _cancellationTokenSource =
             new CancellationTokenSource();
@@ -978,6 +993,33 @@ public class ContinuousRecordingService
 
         Console.WriteLine(
             $"   Motivo: {reason}");
+
+        // Contar las apariciones del mismo error para esta estación.
+        // El contador acumulado no se reinicia cuando la estación se recupera.
+        var errorKey = $"{station.Id:N}|{reason.Trim()}";
+        int totalOccurrences;
+
+        lock (_errorCountsLock)
+        {
+            _errorCounts.TryGetValue(errorKey, out totalOccurrences);
+            totalOccurrences++;
+            _errorCounts[errorKey] = totalOccurrences;
+        }
+
+        try
+        {
+            ErrorRegistered?.Invoke(
+                station.Name,
+                reason,
+                totalOccurrences);
+        }
+        catch (Exception eventException)
+        {
+            // Un fallo al actualizar la interfaz no debe detener la grabación.
+            Console.WriteLine(
+                $"⚠️ No se pudo actualizar la vista de errores: " +
+                eventException.Message);
+        }
 
         var alertThreshold =
             _configuration

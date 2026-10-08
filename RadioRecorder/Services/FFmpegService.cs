@@ -15,6 +15,28 @@ public class FFmpegService
     private readonly ConcurrentDictionary<int, long>
     _ffmpegProgress = new();
 
+    private readonly ConcurrentDictionary<int, string>
+        _processStations = new();
+
+    // Los diagnósticos se reenvían a la interfaz WPF.
+    public event Action<string, string>? DiagnosticReported;
+
+    private void ReportDiagnostic(string stationName, string message)
+    {
+        Console.WriteLine($"⚠️ [{stationName}] {message}");
+
+        try
+        {
+            DiagnosticReported?.Invoke(stationName, message);
+        }
+        catch (Exception ex)
+        {
+            // Un error en la notificación no debe afectar la grabación.
+            Console.WriteLine(
+                $"No se pudo notificar el diagnóstico a la interfaz: {ex.Message}");
+        }
+    }
+
     public FFmpegService(
      RecordingConfiguration configuration,
      IStreamResolver streamResolver)
@@ -107,12 +129,24 @@ public class FFmpegService
                         $"✅ [{station.Name}] Grabación iniciada " +
                         $"correctamente con formato de entrada: {format}");
 
+                    if (!string.Equals(
+                            format,
+                            station.StreamFormat,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        ReportDiagnostic(
+                            station.Name,
+                            $"La grabación se recuperó usando '{format}'. " +
+                            $"El formato configurado era '{station.StreamFormat}'.");
+                    }
+
                     return process;
                 }
 
-                Console.WriteLine(
-                    $"⚠️ [{station.Name}] El intento con " +
-                    $"{format} no produjo audio suficiente.");
+                ReportDiagnostic(
+                    station.Name,
+                    $"El formato de entrada '{format}' no produjo progreso de audio. " +
+                    "Se probará el siguiente formato disponible.");
             }
 
             // Si fallaron ambos formatos, renovar la URL.
@@ -150,9 +184,21 @@ public class FFmpegService
             }
             catch (OperationCanceledException)
             {
-                Console.WriteLine(
-                    $"⚠️ FFmpeg [{process.Id}] no respondió a tiempo. " +
-                    "Se forzará su cierre.");
+                var message =
+                    "FFmpeg no respondió al cierre normal en 10 segundos; " +
+                    "se forzará su cierre.";
+
+                if (_processStations.TryGetValue(
+                        process.Id,
+                        out var stationName))
+                {
+                    ReportDiagnostic(stationName, message);
+                }
+                else
+                {
+                    Console.WriteLine(
+                        $"⚠️ FFmpeg [{process.Id}] {message}");
+                }
             }
             catch (InvalidOperationException)
             {
@@ -184,6 +230,7 @@ public class FFmpegService
     {
         try
         {
+            string? stationName;
             while (true)
             {
                 var line =
@@ -194,20 +241,92 @@ public class FFmpegService
 
                 Console.WriteLine(
                     $"FFmpeg [{process.Id}]: {line}");
+
+                if (IsSignificantFfmpegError(line) &&
+                    _processStations.TryGetValue(
+                        process.Id,
+                        out stationName))
+                {
+                    ReportDiagnostic(
+                        stationName,
+                        $"FFmpeg: {NormalizeFfmpegError(line)}");
+                }
             }
 
             await process.WaitForExitAsync();
+
+            if (process.ExitCode != 0 &&
+                _processStations.TryGetValue(
+                    process.Id,
+                    out stationName))
+            {
+                ReportDiagnostic(
+                    stationName,
+                    $"FFmpeg terminó inesperadamente con código {process.ExitCode}.");
+            }
 
             Console.WriteLine(
                 $"FFmpeg [{process.Id}] terminó. " +
                 $"ExitCode: {process.ExitCode}");
         }
+        catch (ObjectDisposedException)
+        {
+            // Puede ocurrir durante un cierre normal: StopRecordingAsync
+            // dispone el proceso después de solicitar que FFmpeg termine.
+        }
+        catch (InvalidOperationException)
+        {
+            // El proceso puede cambiar de estado mientras se está cerrando.
+        }
         catch (Exception ex)
         {
-            Console.WriteLine(
-                $"⚠️ Error leyendo salida de FFmpeg [{process.Id}]: " +
-                $"{ex.Message}");
+            if (_processStations.TryGetValue(
+                    process.Id,
+                    out var stationName))
+            {
+                ReportDiagnostic(
+                    stationName,
+                    $"No se pudo leer la salida de FFmpeg: {ex.Message}");
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"⚠️ Error leyendo salida de FFmpeg [{process.Id}]: " +
+                    $"{ex.Message}");
+            }
         }
+        finally
+        {
+            _processStations.TryRemove(process.Id, out _);
+        }
+    }
+
+    private static bool IsSignificantFfmpegError(string line)
+    {
+        var value = line.ToLowerInvariant();
+
+        return value.Contains("error") ||
+               value.Contains("failed") ||
+               value.Contains("invalid data") ||
+               value.Contains("connection refused") ||
+               value.Contains("connection reset") ||
+               value.Contains("timed out") ||
+               value.Contains("http error") ||
+               value.Contains("server returned") ||
+               value.Contains("404 not found") ||
+               value.Contains("403 forbidden") ||
+               value.Contains("input/output error");
+    }
+
+    private static string NormalizeFfmpegError(string line)
+    {
+        // Evita filas excesivamente largas en la tabla.
+        const int maxLength = 220;
+        var normalized = line.Trim();
+
+        return normalized.Length <= maxLength
+            ? normalized
+            : normalized[..maxLength] + "...";
     }
 
     private async Task<string> GetInitialStreamUrlAsync(
@@ -245,16 +364,33 @@ public class FFmpegService
             $"🔄 [{station.Name}] " +
             $"Actualizando URL del stream...");
 
-        var streamUrl =
-            await _streamResolver.ResolveStreamUrlAsync(
+        string? streamUrl;
+
+        try
+        {
+            streamUrl = await _streamResolver.ResolveStreamUrlAsync(
                 station,
                 cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            ReportDiagnostic(
+                station.Name,
+                $"No se pudo actualizar la URL del stream: {ex.Message}");
+            throw;
+        }
 
         if (string.IsNullOrWhiteSpace(streamUrl))
         {
+            const string message = "No fue posible encontrar una nueva URL del stream.";
+            ReportDiagnostic(station.Name, message);
+
             throw new InvalidOperationException(
-                $"No fue posible encontrar un nuevo " +
-                $"stream para {station.Name}.");
+                $"{message} Estación: {station.Name}.");
         }
 
         station.StreamUrl =
@@ -283,17 +419,6 @@ public class FFmpegService
                 StringComparison.OrdinalIgnoreCase)
                 ? string.Empty
                 : $"-f {inputFormat} ";
-
-        if (!string.IsNullOrWhiteSpace(
-                station.StreamFormat) &&
-            !string.Equals(
-                station.StreamFormat,
-                "auto",
-                StringComparison.OrdinalIgnoreCase))
-        {
-            inputFormat =
-                $"-f {station.StreamFormat} ";
-        }
 
         var arguments =
             $"-hide_banner " +
@@ -346,6 +471,7 @@ public class FFmpegService
         }
 
         _ffmpegProgress[process.Id] = 0;
+        _processStations[process.Id] = station.Name;
 
         _ = ReadProgressAsync(process);
         _ = ReadOutputAsync(process);
@@ -431,9 +557,9 @@ public class FFmpegService
         }
         catch (Exception ex)
         {
-            Console.WriteLine(
-                $"⚠️ [{station.Name}] Falló el intento " +
-                $"con formato {inputFormat}: {ex.Message}");
+            ReportDiagnostic(
+                station.Name,
+                $"Falló el intento con formato '{inputFormat}': {ex.Message}");
 
             if (process is not null)
             {
