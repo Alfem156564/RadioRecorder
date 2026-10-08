@@ -16,6 +16,12 @@ public class ContinuousRecordingService
     private readonly Dictionary<Guid, Recording>
         _currentSegments = [];
 
+    private readonly Dictionary<Guid, int>
+    _consecutiveFailures = [];
+
+    private readonly HashSet<Guid>
+        _failureAlertsIssued = [];
+
     public ContinuousRecordingService(
         RadioRecorderService recorderService,
         RecordingConfiguration configuration)
@@ -156,9 +162,39 @@ public class ContinuousRecordingService
             // Estamos dentro del horario.
             //
 
-            await RunCurrentRecordingWindowAsync(
-                station,
-                cancellationToken);
+            try
+            {
+                await RunCurrentRecordingWindowAsync(
+                    station,
+                    cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                RegisterFailure(
+                    station,
+                    ex.Message);
+
+                Console.WriteLine();
+
+                Console.WriteLine(
+                    $"⚠️ [{station.Name}] " +
+                    $"No fue posible iniciar la grabación:");
+
+                Console.WriteLine(
+                    $"   {ex.Message}");
+
+                Console.WriteLine(
+                    $"🔄 [{station.Name}] " +
+                    $"Se reintentará posteriormente.");
+
+                await Task.Delay(
+                    _configuration.RecoveryRetryInterval,
+                    cancellationToken);
+            }
         }
     }
 
@@ -214,6 +250,10 @@ public class ContinuousRecordingService
             if (!IsRecordingAlive(
                     currentRecording))
             {
+                RegisterFailure(
+                    station,
+                    "FFmpeg terminó inesperadamente.");
+
                 Console.WriteLine();
                 Console.WriteLine(
                     $"⚠️ [{station.Name}] " +
@@ -348,6 +388,10 @@ public class ContinuousRecordingService
             }
             catch (Exception ex)
             {
+                RegisterFailure(
+                    station,
+                    ex.Message);
+
                 Console.WriteLine();
                 Console.WriteLine(
                     $"⚠️ [{station.Name}] " +
@@ -451,6 +495,7 @@ public class ContinuousRecordingService
         {
             if (!IsRecordingAlive(recording))
             {
+
                 Console.WriteLine();
                 Console.WriteLine(
                     $"⚠️ [{station.Name}] " +
@@ -630,6 +675,8 @@ public class ContinuousRecordingService
                 null,
                 fileNameStart,
                 fileNameEnd);
+
+        RegisterSuccess(station);
 
         Console.WriteLine();
         Console.WriteLine(
@@ -871,6 +918,127 @@ public class ContinuousRecordingService
                 delay,
                 cancellationToken);
         }
+    }
+
+    private void RegisterFailure(
+    RadioStation station,
+    string reason)
+    {
+        if (!_consecutiveFailures.TryGetValue(
+                station.Id,
+                out var failures))
+        {
+            failures = 0;
+        }
+
+        failures++;
+
+        _consecutiveFailures[station.Id] =
+            failures;
+
+        Console.WriteLine();
+        Console.WriteLine(
+            $"❌ [{station.Name}] " +
+            $"Fallo consecutivo #{failures}");
+
+        Console.WriteLine(
+            $"   Motivo: {reason}");
+
+        var alertThreshold =
+            _configuration
+                .MaxConsecutiveFailuresBeforeAlert;
+
+        if (failures >= alertThreshold &&
+            !_failureAlertsIssued.Contains(
+                station.Id))
+        {
+            _failureAlertsIssued.Add(
+                station.Id);
+
+            Console.WriteLine();
+            Console.WriteLine(
+                "======================================");
+
+            Console.WriteLine(
+                "       🚨 ALERTA DE ESTACIÓN 🚨");
+
+            Console.WriteLine(
+                "======================================");
+
+            Console.WriteLine();
+
+            Console.WriteLine(
+                $"📻 Estación: {station.Name}");
+
+            Console.WriteLine(
+                $"❌ Fallos consecutivos: {failures}");
+
+            Console.WriteLine();
+
+            Console.WriteLine(
+                "No fue posible obtener o grabar " +
+                "el stream de la estación.");
+
+            Console.WriteLine();
+
+            Console.WriteLine(
+                "Posibles causas:");
+
+            Console.WriteLine(
+                "   • La estación está fuera del aire.");
+
+            Console.WriteLine(
+                "   • La página de la estación está caída.");
+
+            Console.WriteLine(
+                "   • El stream no está disponible.");
+
+            Console.WriteLine(
+                "   • La URL del stream cambió.");
+
+            Console.WriteLine(
+                "   • FFmpeg no pudo iniciar la grabación.");
+
+            Console.WriteLine();
+
+            Console.WriteLine(
+                "🔄 El sistema continuará intentando " +
+                "recuperar la estación.");
+
+            Console.WriteLine();
+
+            Console.WriteLine(
+                "======================================");
+        }
+    }
+
+    private void RegisterSuccess(
+        RadioStation station)
+    {
+        if (!_consecutiveFailures.TryGetValue(
+                station.Id,
+                out var failures))
+        {
+            return;
+        }
+
+        if (failures > 0)
+        {
+            Console.WriteLine();
+            Console.WriteLine(
+                $"🟢 [{station.Name}] " +
+                $"Estación recuperada.");
+
+            Console.WriteLine(
+                $"   Fallos consecutivos anteriores: " +
+                $"{failures}");
+        }
+
+        _consecutiveFailures.Remove(
+            station.Id);
+
+        _failureAlertsIssued.Remove(
+            station.Id);
     }
 
     private void ValidateConfiguration()

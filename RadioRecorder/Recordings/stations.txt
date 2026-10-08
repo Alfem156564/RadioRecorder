@@ -1,0 +1,15 @@
+[
+  
+  {
+    "Id": "33333333-3333-3333-3333-333333333333",
+    "Name": "Stereo Luz FM",
+    "Frequency": "99.9 FM",
+    "City": "Tehuacán",
+    "StationPageUrl": "https://stereoluzfm.radiostream321.com",
+    "StreamUrl": "",
+    "StreamFormat": "auto",
+    "RecordingStartTime": "06:00:00",
+    "RecordingEndTime": "20:00:00",
+    "RecordingFileTimeOffsetHours": 0
+  }
+]

@@ -7,6 +7,9 @@ public class ProgramMonitorService
 {
     private readonly StationMonitorService _stationMonitorService;
 
+    private readonly IStreamResolver
+    _streamResolver;
+
     private readonly ProgramDetectionService _detectionService;
 
     private readonly ProgramHistoryService
@@ -20,13 +23,17 @@ public class ProgramMonitorService
     private readonly List<Task> _stationTasks = [];
 
     public ProgramMonitorService(
-     StationMonitorService stationMonitorService,
-     ProgramDetectionService detectionService,
-     IScheduleProvider scheduleProvider,
-     ProgramHistoryService programHistoryService)
+    StationMonitorService stationMonitorService,
+    IStreamResolver streamResolver,
+    ProgramDetectionService detectionService,
+    IScheduleProvider scheduleProvider,
+    ProgramHistoryService programHistoryService)
     {
         _stationMonitorService =
             stationMonitorService;
+
+        _streamResolver =
+            streamResolver;
 
         _detectionService =
             detectionService;
@@ -140,11 +147,17 @@ public class ProgramMonitorService
             // información del stream.
             //
 
-            var streamInfo =
-                await _stationMonitorService
-                    .GetCurrentStreamInfoAsync(
-                        station,
-                        cancellationToken);
+            StationStreamInfo? streamInfo = null;
+
+            if (!string.IsNullOrWhiteSpace(
+                    station.StreamUrl))
+            {
+                streamInfo =
+                    await _stationMonitorService
+                        .GetCurrentStreamInfoAsync(
+                            station,
+                            cancellationToken);
+            }
 
             ProgramDetection? detection =
                 null;

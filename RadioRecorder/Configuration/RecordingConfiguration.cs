@@ -21,6 +21,10 @@ public class RecordingConfiguration
     public TimeSpan RecoveryRetryInterval { get; set; } =
         TimeSpan.FromSeconds(10);
 
+    // Número de fallos consecutivos antes de
+    // mostrar una alerta de estación.
+    public int MaxConsecutiveFailuresBeforeAlert { get; set; } = 3;
+
     public string AudioFormat { get; set; } = "mp3";
 
     public int AudioBitrateKbps { get; set; } = 96;

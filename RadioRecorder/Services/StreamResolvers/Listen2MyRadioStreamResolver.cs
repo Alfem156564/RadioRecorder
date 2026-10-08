@@ -90,20 +90,79 @@ public class Listen2MyRadioStreamResolver : IStreamResolver
     }
 
     private static string? FindStreamUrl(
-        string html)
+    string html)
     {
-        const string pattern =
+        // 1. Buscar el formato clásico de Listen2MyRadio.
+        const string listen2MyRadioPattern =
             @"https?://[^""'\s<>\\]+listen2myradio\.com/live\.mp3\?typeportmount=[^""'\s<>\\]+";
 
-        var match =
+        var listen2MyRadioMatch =
             Regex.Match(
                 html,
-                pattern,
+                listen2MyRadioPattern,
                 RegexOptions.IgnoreCase);
 
-        return match.Success
-            ? match.Value
-            : null;
+        if (listen2MyRadioMatch.Success)
+        {
+            return listen2MyRadioMatch.Value;
+        }
+
+        // 2. Buscar URLs de stream AAC conocidas.
+        var aacMatches =
+            Regex.Matches(
+                html,
+                @"https?://[^""'\s<>\\]+(?:\.aac|\.aac\?[^""'\s<>\\]*)",
+                RegexOptions.IgnoreCase);
+
+        foreach (Match match in aacMatches)
+        {
+            if (IsInvalidListen2MyRadioResource(match.Value))
+            {
+                continue;
+            }
+
+            return match.Value;
+        }
+
+        // 3. Buscar posibles streams MP3.
+        var mp3Matches =
+            Regex.Matches(
+                html,
+                @"https?://[^""'\s<>\\]+\.mp3(?:\?[^""'\s<>\\]*)?",
+                RegexOptions.IgnoreCase);
+
+        foreach (Match match in mp3Matches)
+        {
+            if (IsInvalidListen2MyRadioResource(match.Value))
+            {
+                continue;
+            }
+
+            return match.Value;
+        }
+
+        return null;
+    }
+
+    private static bool IsInvalidListen2MyRadioResource(
+    string url)
+    {
+        var lowerUrl =
+            url.ToLowerInvariant();
+
+        // Recursos utilizados por el reproductor,
+        // pero que no representan el stream de radio.
+        if (lowerUrl.Contains("/intro.mp3"))
+        {
+            return true;
+        }
+
+        if (lowerUrl.Contains("radio12345.com"))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private async Task<bool> IsStreamAvailableAsync(

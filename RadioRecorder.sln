@@ -5,6 +5,8 @@ VisualStudioVersion = 17.14.36511.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RadioRecorder", "RadioRecorder\RadioRecorder.csproj", "{114A496D-D826-4DB8-9159-D779D4E020D5}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RadioRecorder.Desktop", "RadioRecorder.Desktop\RadioRecorder.Desktop.csproj", "{8ED3867D-66C5-446C-B675-EF4DEB2BFF98}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{114A496D-D826-4DB8-9159-D779D4E020D5}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{114A496D-D826-4DB8-9159-D779D4E020D5}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{114A496D-D826-4DB8-9159-D779D4E020D5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8ED3867D-66C5-446C-B675-EF4DEB2BFF98}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8ED3867D-66C5-446C-B675-EF4DEB2BFF98}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8ED3867D-66C5-446C-B675-EF4DEB2BFF98}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8ED3867D-66C5-446C-B675-EF4DEB2BFF98}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -11,12 +11,26 @@ Console.WriteLine("          RADIO RECORDER");
 Console.WriteLine("======================================");
 Console.WriteLine();
 
+
 //
 // Estaciones
 //
+var recordingsDirectory =
+    Path.Combine(
+        AppContext.BaseDirectory,
+        "Recordings");
+
+Directory.CreateDirectory(
+    recordingsDirectory);
+
+var stationsFile =
+    Path.Combine(
+        recordingsDirectory,
+        "stations.txt");
 
 IRadioStationProvider stationProvider =
-    new HardcodedRadioStationProvider();
+    new JsonFileRadioStationProvider(
+        stationsFile);
 
 var stations =
     await stationProvider.GetStationsAsync();
@@ -75,6 +89,9 @@ var streamResolver =
         new IStreamResolver[]
         {
             new Listen2MyRadioStreamResolver(
+                httpClient),
+
+            new StereoLuzStreamResolver(
                 httpClient),
 
             new RadioGrupoStreamResolver(
@@ -183,6 +200,7 @@ var continuousRecordingService =
 var programMonitorService =
     new ProgramMonitorService(
         stationMonitorService,
+        streamResolver,
         programDetectionService,
         scheduleProvider,
         programHistoryService);
