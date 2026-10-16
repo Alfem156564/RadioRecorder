@@ -12,13 +12,14 @@ public static class RadioStationConfiguration
             {
                 Id = Guid.Parse("11111111-1111-1111-1111-111111111111"),
                 Name = "La Lupe",
+                Abbreviation = "LUPE",
                 Frequency = "105.3 FM",
                 City = "Monterrey",
                 StationPageUrl = "https://www.mmradio.com/estaciones/la-lupe-1053-fm-monterrey#",
                 StreamUrl = "https://mmradio-lb.mmlabs.mx/xhlupefm",
                 StreamFormat = "auto",
                 RecordingStartTime = new TimeOnly(6, 0),
-                RecordingEndTime = new TimeOnly(20, 0),
+                RecordingEndTime = new TimeOnly(23, 0),
                 RecordingFileTimeOffsetHours = 0
             },
 
@@ -26,6 +27,7 @@ public static class RadioStationConfiguration
             {
                 Id = Guid.Parse("22222222-2222-2222-2222-222222222222"),
                 Name = "Magia 101",
+                Abbreviation = "MAGIA",
                 Frequency = "101.7 FM",
                 City = "Aguascalientes",
                 StationPageUrl = "https://radiogrupo.com/magia101/",
@@ -40,6 +42,7 @@ public static class RadioStationConfiguration
             {
                 Id = Guid.Parse("33333333-3333-3333-3333-333333333333"),
                 Name = "Stereo Luz FM",
+                Abbreviation = "LUZ",
                 Frequency = "99.9 FM",
                 City = "Tehuacán",
                 StationPageUrl = "https://stereoluzfm.radiostream321.com",

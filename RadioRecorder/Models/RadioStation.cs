@@ -6,6 +6,8 @@ public class RadioStation
 
     public string Name { get; set; } = string.Empty;
 
+    public string Abbreviation { get; set; } = string.Empty;
+
     public string Frequency { get; set; } = string.Empty;
 
     public string City { get; set; } = string.Empty;

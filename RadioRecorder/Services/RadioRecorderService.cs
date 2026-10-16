@@ -58,47 +58,50 @@ public class RadioRecorderService
     DateTime? fileNameEnd = null,
     CancellationToken cancellationToken = default)
     {
+        var startTime = DateTime.Now;
+
+        // Este tiempo ya representa la hora lógica para el nombre del archivo,
+        // incluyendo RecordingFileTimeOffsetHours cuando corresponde.
+        var logicalStart =
+            fileNameStart ?? startTime;
+
+        // Estructura: Recordings/Ciudad/mmm-dd/
+        var cityFolder =
+            SanitizeFolderName(
+                string.IsNullOrWhiteSpace(station.City)
+                    ? "Sin ciudad"
+                    : station.City.Trim());
+
+        var monthAbbreviation =
+            GetSpanishMonthAbbreviation(logicalStart.Month);
+
+        var dayFolder =
+            $"{monthAbbreviation}-{logicalStart:dd}";
+
         var recordingsFolder =
             Path.Combine(
                 AppContext.BaseDirectory,
                 "Recordings",
-                SanitizeFolderName(
-                    station.Name));
+                cityFolder,
+                dayFolder);
 
         Directory.CreateDirectory(
             recordingsFolder);
 
-        var startTime = DateTime.Now;
-
+        // Si todavía no se detectó el programa, se usa "Nada".
         var programName =
             program is null
-                ? "Continuo"
+                ? "NADA"
                 : SanitizeFileName(
                     program.Name);
 
-        var logicalStart =
-            fileNameStart ?? startTime;
+        var stationAbbreviation =
+            GetStationAbbreviation(station);
 
-        var logicalEnd =
-            fileNameEnd;
-
-        string fileName;
-
-        if (logicalEnd.HasValue)
-        {
-            fileName =
-                $"{SanitizeFileName(station.Name)}_" +
-                $"{programName}_" +
-                $"{logicalStart:yyyy-MM-dd_HH-mm-ss}_" +
-                $"{logicalEnd.Value:HH-mm-ss}.mp3";
-        }
-        else
-        {
-            fileName =
-                $"{SanitizeFileName(station.Name)}_" +
-                $"{programName}_" +
-                $"{logicalStart:yyyy-MM-dd_HH-mm-ss}.mp3";
-        }
+        // Formato: SIGLAS-Nada_DD-MM-AA_HHMMSS.mp3
+        var fileName =
+            $"{stationAbbreviation}-{programName}_" +
+            $"{logicalStart:dd-MM-yy_HHmmss}.mp3".ToUpper();
 
         var filePath =
             Path.Combine(
@@ -227,6 +230,54 @@ public class RadioRecorderService
         }
 
         return null;
+    }
+
+    private static readonly string[] SpanishMonthAbbreviations =
+    [
+        "ene", "feb", "mar", "abr", "may", "jun",
+        "jul", "ago", "sep", "oct", "nov", "dic"
+    ];
+
+    private static string GetSpanishMonthAbbreviation(int month)
+    {
+        if (month is < 1 or > 12)
+        {
+            throw new ArgumentOutOfRangeException(nameof(month));
+        }
+
+        return SpanishMonthAbbreviations[month - 1];
+    }
+
+    private static string GetStationAbbreviation(RadioStation station)
+    {
+        if (!string.IsNullOrWhiteSpace(station.Abbreviation))
+        {
+            return SanitizeFileName(
+                    station.Abbreviation.Trim())
+                .ToUpperInvariant();
+        }
+
+        // Compatibilidad con estaciones SQL que todavía no tienen siglas
+        // almacenadas en la base de datos: se usa la primera palabra útil.
+        var words = station.Name
+            .Split(
+                [' ', '-', '_'],
+                StringSplitOptions.RemoveEmptyEntries |
+                StringSplitOptions.TrimEntries);
+
+        var ignoredWords = new HashSet<string>(
+            ["LA", "EL", "LOS", "LAS", "DE", "DEL", "RADIO"],
+            StringComparer.OrdinalIgnoreCase);
+
+        var usefulWord = words.FirstOrDefault(
+            word => !ignoredWords.Contains(word));
+
+        var abbreviation = string.IsNullOrWhiteSpace(usefulWord)
+            ? "RADIO"
+            : usefulWord;
+
+        return SanitizeFileName(abbreviation)
+            .ToUpperInvariant();
     }
 
     private static string SanitizeFileName(
