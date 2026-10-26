@@ -1,25 +1,28 @@
 ﻿
-using System;
-using System.Collections.ObjectModel;
-using System.Linq;
-using System.IO;
-using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Media;
-using System.Windows.Input;
-
-
 using RadioRecorder.Data;
 using RadioRecorder.Desktop.Services;
 using RadioRecorder.Interfaces;
 using RadioRecorder.Services;
 using RadioRecorder.Services.StationProviders;
+using System;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.IO;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
 
 namespace RadioRecorder.Desktop;
 
 public partial class MainWindow : Window
 {
+    private const int StationStatusRefreshIntervalSeconds = 5;
+
     private RecordingApplicationService? _applicationService;
 
     private readonly ObservableCollection<RecordingErrorItem>
@@ -28,15 +31,38 @@ public partial class MainWindow : Window
     private readonly Dictionary<(string Station, string Error), int>
         _errorOccurrences = new();
 
+    private readonly ObservableCollection<StationStatusItem> _stationStatuses = [];
+
+    private readonly DispatcherTimer _stationStatusTimer;
+
     public ObservableCollection<RecordingErrorItem> RecordingErrors =>
         _recordingErrors;
+
+    public ObservableCollection<StationStatusItem> StationStatuses =>
+        _stationStatuses;
 
     private bool _isStartingOrStopping;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        var interval = StationStatusRefreshIntervalSeconds;
+
+        var intervalText = interval % 60 == 0
+            ? $"{interval / 60} minuto(s)"
+            : $"{interval} segundo(s)";
+
+        StationStatusRefreshText.Text =
+            $"  •  Actualización automática cada {intervalText}";
+
         DataContext = this;
+
+        _stationStatusTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(StationStatusRefreshIntervalSeconds)
+        };
+        _stationStatusTimer.Tick += (_, _) => RefreshStationStatuses();
     }
 
     private async void StartButton_Click(
@@ -86,6 +112,8 @@ public partial class MainWindow : Window
             StartButton.Visibility = Visibility.Collapsed;
             StopButton.Visibility = Visibility.Visible;
             RefreshStationsButton.IsEnabled = true;
+            RefreshStationStatuses();
+            _stationStatusTimer.Start();
 
             StatusText.Text = "Grabando";
             StatusIndicator.Fill = Brushes.Green;
@@ -153,6 +181,8 @@ public partial class MainWindow : Window
             _applicationService = null;
 
             Log("Servicios detenidos correctamente.");
+            _stationStatusTimer.Stop();
+            _stationStatuses.Clear();
 
             StopButton.Visibility = Visibility.Collapsed;
             StartButton.Visibility = Visibility.Visible;
@@ -202,6 +232,7 @@ public partial class MainWindow : Window
             Log("Consultando nuevamente el origen de estaciones...");
 
             var result = await _applicationService.RefreshStationsAsync();
+            RefreshStationStatuses();
 
             Log(
                 $"Actualización terminada. Estaciones actualizadas: {result.Updated}; " +
@@ -234,6 +265,53 @@ public partial class MainWindow : Window
         {
             Mouse.OverrideCursor = null;
             RefreshStationsButton.IsEnabled = _applicationService is not null;
+        }
+    }
+
+    private void RefreshStationStatuses()
+    {
+        if (_applicationService is null)
+            return;
+
+        var currentStatuses = _applicationService.GetStationStatuses();
+        var currentIds = currentStatuses.Select(item => item.Id).ToHashSet();
+
+        for (var i = _stationStatuses.Count - 1; i >= 0; i--)
+        {
+            if (!currentIds.Contains(_stationStatuses[i].Id))
+                _stationStatuses.RemoveAt(i);
+        }
+
+        foreach (var status in currentStatuses)
+        {
+            var existing = _stationStatuses.FirstOrDefault(item => item.Id == status.Id);
+            if (existing is null)
+            {
+                existing = new StationStatusItem { Id = status.Id };
+                _stationStatuses.Add(existing);
+            }
+
+            existing.Station = status.Name;
+            existing.Frequency = status.Frequency;
+            existing.City = status.City;
+            existing.Status = status.Status;
+            existing.StatusIcon = status.Status switch
+            {
+                "Grabando" => "🟢",
+                "Error de grabación" => "🔴",
+                _ => "⚪"
+            };
+        }
+
+        // Mantener el orden alfabético para localizar estaciones rápidamente.
+        var ordered = _stationStatuses.OrderBy(item => item.Station).ToList();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var currentIndex = _stationStatuses.IndexOf(ordered[i]);
+            if (currentIndex != i)
+            {
+                _stationStatuses.Move(currentIndex, i);
+            }
         }
     }
 
@@ -328,6 +406,8 @@ public partial class MainWindow : Window
 
     protected override async void OnClosed(EventArgs e)
     {
+        _stationStatusTimer.Stop();
+
         if (_applicationService is not null)
         {
             try
@@ -350,5 +430,60 @@ public partial class MainWindow : Window
         }
 
         base.OnClosed(e);
+    }
+
+
+    public sealed class StationStatusItem : INotifyPropertyChanged
+    {
+        private string _station = string.Empty;
+        private string _frequency = string.Empty;
+        private string _city = string.Empty;
+        private string _status = string.Empty;
+        private string _statusIcon = "⚪";
+
+        public Guid Id { get; set; }
+
+        public string Station
+        {
+            get => _station;
+            set => SetField(ref _station, value);
+        }
+
+        public string Frequency
+        {
+            get => _frequency;
+            set => SetField(ref _frequency, value);
+        }
+
+        public string City
+        {
+            get => _city;
+            set => SetField(ref _city, value);
+        }
+
+        public string Status
+        {
+            get => _status;
+            set => SetField(ref _status, value);
+        }
+
+        public string StatusIcon
+        {
+            get => _statusIcon;
+            set => SetField(ref _statusIcon, value);
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        private void SetField<T>(ref T field, T value,
+            [CallerMemberName] string? propertyName = null)
+        {
+            if (Equals(field, value))
+                return;
+
+            field = value;
+            PropertyChanged?.Invoke(this,
+                new PropertyChangedEventArgs(propertyName));
+        }
     }
 }

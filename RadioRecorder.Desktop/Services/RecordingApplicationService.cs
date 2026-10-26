@@ -166,6 +166,16 @@ public sealed class RecordingApplicationService : IAsyncDisposable
     /// Vuelve a consultar el proveedor y actualiza únicamente las estaciones
     /// que no estén grabando en este momento.
     /// </summary>
+    public IReadOnlyList<(Guid Id, string Name, string Frequency, string City, string Status)> GetStationStatuses()
+    {
+        if (_recordingService is null)
+        {
+            return Array.Empty<(Guid Id, string Name, string Frequency, string City, string Status)>();
+        }
+
+        return _recordingService.GetStationStatuses(Stations);
+    }
+
     public async Task<(int Updated, int SkippedRecording, int SkippedNoErrors, int NotFound)>
         RefreshStationsAsync(CancellationToken cancellationToken = default)
     {

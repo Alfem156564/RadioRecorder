@@ -32,6 +32,35 @@ public class ContinuousRecordingService
 
     public event Action<string, string, int>? ErrorRegistered;
 
+    /// <summary>
+    /// Devuelve el estado actual de cada estación para mostrarlo en la interfaz.
+    /// Una grabación viva tiene prioridad; de lo contrario, los fallos consecutivos
+    /// indican error y las demás estaciones quedan en espera.
+    /// </summary>
+    public IReadOnlyList<(Guid Id, string Name, string Frequency, string City, string Status)> GetStationStatuses(
+        IReadOnlyList<RadioStation> stations)
+    {
+        return stations
+            .Select(station =>
+            {
+                var isRecording =
+                    _currentSegments.TryGetValue(station.Id, out var recording) &&
+                    IsRecordingAlive(recording);
+
+                var hasErrors = _consecutiveFailures.ContainsKey(station.Id);
+
+                var status = isRecording
+                    ? "Grabando"
+                    : hasErrors
+                        ? "Error de grabación"
+                        : "En espera";
+
+                return (station.Id, station.Name, station.Frequency, station.City ?? string.Empty, status);
+            })
+            .OrderBy(item => item.Name)
+            .ToList();
+    }
+
     public ContinuousRecordingService(
         RadioRecorderService recorderService,
         RecordingConfiguration configuration)
