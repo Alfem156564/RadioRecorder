@@ -8,8 +8,6 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Infrastructure;
 
 using RadioRecorder.Data;
 using RadioRecorder.Desktop.Services;
@@ -33,12 +31,6 @@ public partial class MainWindow : Window
         _recordingErrors;
 
     private bool _isStartingOrStopping;
-
-    private const string ConnectionString =
-        "Server=localhost\\MSSQLSERVER01;" +
-        "Database=test-radio-database;" +
-        "Integrated Security=True;" +
-        "TrustServerCertificate=True;";
 
     public MainWindow()
     {
@@ -217,14 +209,7 @@ public partial class MainWindow : Window
 
     private static IRadioStationProvider CreateSqlProvider()
     {
-        var options = new DbContextOptionsBuilder<RadioDbContext>()
-            .UseSqlServer(ConnectionString)
-            .Options;
-
-        IDbContextFactory<RadioDbContext> factory =
-            new PooledDbContextFactory<RadioDbContext>(options);
-
-        return new SqlRadioStationProvider(factory);
+        return SqlRadioStationProvider.CreateFromEnvironment();
     }
 
     private void OnRecordingErrorRegistered(
