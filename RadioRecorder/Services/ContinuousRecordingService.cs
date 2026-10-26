@@ -1,4 +1,5 @@
-﻿using RadioRecorder.Configuration;
+﻿using System.Collections.Concurrent;
+using RadioRecorder.Configuration;
 using RadioRecorder.Models;
 
 namespace RadioRecorder.Services;
@@ -13,14 +14,14 @@ public class ContinuousRecordingService
 
     private readonly List<Task> _stationTasks = [];
 
-    private readonly Dictionary<Guid, Recording>
-        _currentSegments = [];
+    private readonly ConcurrentDictionary<Guid, Recording>
+        _currentSegments = new();
 
-    private readonly Dictionary<Guid, int>
-    _consecutiveFailures = [];
+    private readonly ConcurrentDictionary<Guid, int>
+        _consecutiveFailures = new();
 
-    private readonly HashSet<Guid>
-        _failureAlertsIssued = [];
+    private readonly ConcurrentDictionary<Guid, byte>
+        _failureAlertsIssued = new();
 
     // Conteo acumulado de errores desde que inicia este servicio.
     // Es independiente de _consecutiveFailures, que se reinicia al recuperarse.
@@ -37,6 +38,69 @@ public class ContinuousRecordingService
     {
         _recorderService = recorderService;
         _configuration = configuration;
+    }
+
+    /// <summary>
+    /// Actualiza los datos de las estaciones que no tienen una grabación viva.
+    /// Conserva la instancia original de RadioStation para que la tarea de esa
+    /// estación utilice los nuevos datos en el siguiente intento.
+    /// </summary>
+    public (int Updated, int SkippedRecording, int SkippedNoErrors, int NotFound) RefreshStations(
+        IReadOnlyList<RadioStation> currentStations,
+        IReadOnlyList<RadioStation> refreshedStations)
+    {
+        var refreshedById = refreshedStations
+            .GroupBy(station => station.Id)
+            .ToDictionary(group => group.Key, group => group.First());
+
+        var updated = 0;
+        var skippedRecording = 0;
+        var skippedNoErrors = 0;
+        var notFound = 0;
+
+        foreach (var current in currentStations)
+        {
+            if (_currentSegments.TryGetValue(current.Id, out var activeRecording) &&
+                IsRecordingAlive(activeRecording))
+            {
+                skippedRecording++;
+                continue;
+            }
+
+            // Solo se actualizan estaciones que ya registraron errores de
+            // grabación. Las estaciones sanas o simplemente fuera de horario
+            // se dejan intactas.
+            if (!_consecutiveFailures.ContainsKey(current.Id))
+            {
+                skippedNoErrors++;
+                continue;
+            }
+
+            if (!refreshedById.TryGetValue(current.Id, out var refreshed))
+            {
+                notFound++;
+                continue;
+            }
+
+            // Mutar el objeto existente es importante: la tarea de grabación
+            // ya tiene esta misma instancia y verá la URL nueva al reintentar.
+            current.Name = refreshed.Name;
+            current.Abbreviation = refreshed.Abbreviation;
+            current.Frequency = refreshed.Frequency;
+            current.City = refreshed.City;
+            current.StationPageUrl = refreshed.StationPageUrl;
+            current.StreamUrl = refreshed.StreamUrl;
+            current.StreamFormat = refreshed.StreamFormat;
+            current.RecordingStartTime = refreshed.RecordingStartTime;
+            current.RecordingEndTime = refreshed.RecordingEndTime;
+            current.RecordingFileTimeOffsetHours =
+                refreshed.RecordingFileTimeOffsetHours;
+
+            // El historial acumulado de errores de la interfaz se conserva.
+            updated++;
+        }
+
+        return (updated, skippedRecording, skippedNoErrors, notFound);
     }
 
     public async Task StartAsync(
@@ -392,8 +456,8 @@ public class ContinuousRecordingService
                 station,
                 currentRecording);
 
-            _currentSegments.Remove(
-                station.Id);
+            _currentSegments.TryRemove(
+                station.Id, out _);
 
             return;
         }
@@ -602,8 +666,8 @@ public class ContinuousRecordingService
                 station,
                 recording);
 
-            _currentSegments.Remove(
-                station.Id);
+            _currentSegments.TryRemove(
+                station.Id, out _);
 
             //
             // Volvemos al loop principal.
@@ -1026,11 +1090,11 @@ public class ContinuousRecordingService
                 .MaxConsecutiveFailuresBeforeAlert;
 
         if (failures >= alertThreshold &&
-            !_failureAlertsIssued.Contains(
+            !_failureAlertsIssued.ContainsKey(
                 station.Id))
         {
-            _failureAlertsIssued.Add(
-                station.Id);
+            _failureAlertsIssued.TryAdd(
+                station.Id, 0);
 
             Console.WriteLine();
             Console.WriteLine(
@@ -1111,11 +1175,11 @@ public class ContinuousRecordingService
                 $"{failures}");
         }
 
-        _consecutiveFailures.Remove(
-            station.Id);
+        _consecutiveFailures.TryRemove(
+            station.Id, out _);
 
-        _failureAlertsIssued.Remove(
-            station.Id);
+        _failureAlertsIssued.TryRemove(
+            station.Id, out _);
     }
 
     private void ValidateConfiguration()

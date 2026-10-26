@@ -16,6 +16,8 @@ public sealed class RecordingApplicationService : IAsyncDisposable
 
     private ContinuousRecordingService? _recordingService;
 
+    private IRadioStationProvider? _stationProvider;
+
     private ProgramMonitorService? _programMonitorService;
 
     private bool _isRunning;
@@ -145,6 +147,7 @@ public sealed class RecordingApplicationService : IAsyncDisposable
             await programMonitorService.StartAsync(stations);
 
             Stations = stations;
+            _stationProvider = stationProvider;
             _recordingService = recordingService;
             _programMonitorService = programMonitorService;
             _isRunning = true;
@@ -158,6 +161,31 @@ public sealed class RecordingApplicationService : IAsyncDisposable
         }
     }
 
+
+    /// <summary>
+    /// Vuelve a consultar el proveedor y actualiza únicamente las estaciones
+    /// que no estén grabando en este momento.
+    /// </summary>
+    public async Task<(int Updated, int SkippedRecording, int SkippedNoErrors, int NotFound)>
+        RefreshStationsAsync(CancellationToken cancellationToken = default)
+    {
+        if (!_isRunning || _recordingService is null || _stationProvider is null)
+        {
+            throw new InvalidOperationException(
+                "Las grabaciones deben estar iniciadas para actualizar estaciones.");
+        }
+
+        var refreshedStations = await _stationProvider.GetStationsAsync(
+            cancellationToken);
+
+        if (refreshedStations.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "El proveedor no devolvió estaciones. No se modificó ninguna estación.");
+        }
+
+        return _recordingService.RefreshStations(Stations, refreshedStations);
+    }
 
     public async Task StopAsync()
     {
@@ -206,6 +234,7 @@ public sealed class RecordingApplicationService : IAsyncDisposable
         }
 
         _isRunning = false;
+        _stationProvider = null;
 
         if (errors.Count > 0)
         {

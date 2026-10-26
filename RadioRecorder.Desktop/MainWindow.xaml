@@ -110,7 +110,7 @@
 
                     <Button x:Name="StartButton"
                             Content="▶  Iniciar grabaciones"
-                            Width="190"
+                            Width="175"
                             Height="42"
                             Background="#16845B"
                             Foreground="White"
@@ -119,9 +119,22 @@
                             Cursor="Hand"
                             Click="StartButton_Click"/>
 
+                    <Button x:Name="RefreshStationsButton"
+                            Content="↻  Actualizar estaciones"
+                            Width="180"
+                            Height="42"
+                            Background="#2563A6"
+                            Foreground="White"
+                            FontWeight="SemiBold"
+                            BorderThickness="0"
+                            Cursor="Hand"
+                            IsEnabled="False"
+                            Margin="10,0,0,0"
+                            Click="RefreshStationsButton_Click"/>
+
                     <Button x:Name="StopButton"
                             Content="■  Detener grabaciones"
-                            Width="190"
+                            Width="180"
                             Height="42"
                             Background="#C83C43"
                             Foreground="White"

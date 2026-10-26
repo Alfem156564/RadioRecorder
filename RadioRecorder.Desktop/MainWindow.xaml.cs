@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Input;
 
 
 using RadioRecorder.Data;
@@ -84,6 +85,7 @@ public partial class MainWindow : Window
 
             StartButton.Visibility = Visibility.Collapsed;
             StopButton.Visibility = Visibility.Visible;
+            RefreshStationsButton.IsEnabled = true;
 
             StatusText.Text = "Grabando";
             StatusIndicator.Fill = Brushes.Green;
@@ -120,6 +122,7 @@ public partial class MainWindow : Window
 
             ProviderComboBox.IsEnabled = true;
             StartButton.IsEnabled = true;
+            RefreshStationsButton.IsEnabled = false;
         }
         finally
         {
@@ -153,12 +156,14 @@ public partial class MainWindow : Window
 
             StopButton.Visibility = Visibility.Collapsed;
             StartButton.Visibility = Visibility.Visible;
+            RefreshStationsButton.IsEnabled = false;
 
             StatusText.Text = "Detenido";
             StatusIndicator.Fill = Brushes.SlateGray;
 
             ProviderComboBox.IsEnabled = true;
             StartButton.IsEnabled = true;
+            RefreshStationsButton.IsEnabled = false;
         }
         catch (Exception ex)
         {
@@ -179,6 +184,56 @@ public partial class MainWindow : Window
         {
             _isStartingOrStopping = false;
             StopButton.IsEnabled = true;
+        }
+    }
+
+    private async void RefreshStationsButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_applicationService is null || _isStartingOrStopping)
+            return;
+
+        RefreshStationsButton.IsEnabled = false;
+        Mouse.OverrideCursor = System.Windows.Input.Cursors.Wait;
+
+        try
+        {
+            Log("Consultando nuevamente el origen de estaciones...");
+
+            var result = await _applicationService.RefreshStationsAsync();
+
+            Log(
+                $"Actualización terminada. Estaciones actualizadas: {result.Updated}; " +
+                $"grabaciones activas protegidas: {result.SkippedRecording}; " +
+                $"sin errores (sin cambios): {result.SkippedNoErrors}; " +
+                $"sin coincidencia en el proveedor: {result.NotFound}.");
+
+            MessageBox.Show(
+                $"Actualización completada.\n\n" +
+                $"Estaciones actualizadas: {result.Updated}\n" +
+                $"Grabaciones activas sin cambios: {result.SkippedRecording}\n" +
+                $"Estaciones sin errores, sin cambios: {result.SkippedNoErrors}\n" +
+                $"Estaciones no encontradas en el origen: {result.NotFound}\n\n" +
+                "Las estaciones actualizadas usarán sus nuevos datos en el siguiente intento de grabación.",
+                "Actualizar estaciones",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            Log($"ERROR al actualizar estaciones: {ex.Message}");
+
+            MessageBox.Show(
+                ex.Message,
+                "No se pudieron actualizar las estaciones",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            Mouse.OverrideCursor = null;
+            RefreshStationsButton.IsEnabled = _applicationService is not null;
         }
     }
 
