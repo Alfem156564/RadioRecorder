@@ -1079,6 +1079,19 @@ public class ContinuousRecordingService
         _consecutiveFailures[station.Id] =
             failures;
 
+        // Guardar el evento en el log JSON de la carpeta diaria de la estación.
+        try
+        {
+            RecordingErrorLogService.Register(station, reason, DateTime.Now);
+        }
+        catch (Exception logException)
+        {
+            // Un problema al escribir el historial no debe detener la grabación.
+            Console.WriteLine(
+                $"⚠️ No se pudo guardar el log de errores [{station.Name}]: " +
+                logException.Message);
+        }
+
         Console.WriteLine();
         Console.WriteLine(
             $"❌ [{station.Name}] " +

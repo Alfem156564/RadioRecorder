@@ -12,9 +12,11 @@ public class RecordingConfiguration
     public TimeSpan SegmentOverlap { get; set; } =
         TimeSpan.FromSeconds(20);
 
-    // Cada cuánto revisamos FFmpeg.
+    // Cada cuánto se comprueba que el proceso FFmpeg siga activo.
+    // También determina la frecuencia con la que se detectan fallos inesperados.
+    // Modifica este valor para ajustar el chequeo (por defecto, 1 minuto).
     public TimeSpan HealthCheckInterval { get; set; } =
-        TimeSpan.FromSeconds(30);
+        TimeSpan.FromMinutes(1);
 
     // Tiempo entre intentos de recuperación
     // cuando FFmpeg falla.

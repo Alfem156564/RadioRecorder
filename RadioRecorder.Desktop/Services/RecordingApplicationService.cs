@@ -107,10 +107,44 @@ public sealed class RecordingApplicationService : IAsyncDisposable
 
         ffmpegService.DiagnosticReported +=
             (stationName, message) =>
+            {
+                // Los diagnósticos de FFmpeg también aparecen en la tabla de
+                // errores. Persistirlos aquí para que el JSON diario refleje
+                // los mismos eventos que recibe la interfaz.
+                var station = stations.FirstOrDefault(item =>
+                    string.Equals(
+                        item.Name,
+                        stationName,
+                        StringComparison.OrdinalIgnoreCase));
+
+                if (station is not null)
+                {
+                    try
+                    {
+                        RecordingErrorLogService.Register(
+                            station,
+                            message,
+                            DateTime.Now);
+                    }
+                    catch (Exception logException)
+                    {
+                        // No detener ni afectar la grabación si falla el log.
+                        Console.WriteLine(
+                            $"No se pudo guardar el diagnóstico de FFmpeg [{stationName}]: " +
+                            logException.Message);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine(
+                        $"No se encontró la estación '{stationName}' para asociar el diagnóstico al log diario.");
+                }
+
                 RecordingErrorRegistered?.Invoke(
                     stationName,
                     message,
                     0);
+            };
 
         var recorderService = new RadioRecorderService(
             ffmpegService);
